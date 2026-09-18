@@ -116,14 +116,17 @@ class _Region:
         for ring in self.boundary_rings:
             if _point_on_ring(p, ring):
                 return BOUNDARY
+        # The group is the *union* of its polygons' material regions (each
+        # exterior minus its holes).  A point inside one polygon's hole may
+        # still be material through a separate polygon sitting in that hole
+        # (an island), so an outside verdict for one polygon must not short-
+        # circuit the remaining polygons; the result must not depend on the
+        # polygon order.  A point inside a nested (inactive) hole is inside
+        # its active parent hole as well and stays outside material either way.
         for poly in self.polygons:
-            if point_in_interior(p, poly.exterior.points):
-                # Material = inside exterior minus the union of all holes.  A
-                # point inside a nested (inactive) hole is inside its active
-                # parent hole as well and is outside material either way.
-                for hole in poly.holes:
-                    if point_in_interior(p, hole.points):
-                        return OUTSIDE
+            if point_in_interior(p, poly.exterior.points) and not any(
+                point_in_interior(p, hole.points) for hole in poly.holes
+            ):
                 return INSIDE
         return OUTSIDE
 

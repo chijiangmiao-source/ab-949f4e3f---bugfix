@@ -42,10 +42,12 @@ def independent_status(point, polygons: list[Polygon]) -> str:
                 d = ring.points[(i + 1) % len(ring.points)]
                 if point_on_segment(point, c, d):
                     return BOUNDARY
+    # Union semantics: a point inside one polygon's hole can still be material
+    # through a separate polygon inside that hole, so no early "outside".
     for poly in polygons:
-        if point_in_interior(point, poly.exterior.points):
-            if any(point_in_interior(point, h.points) for h in poly.holes):
-                return OUTSIDE
+        if point_in_interior(point, poly.exterior.points) and not any(
+            point_in_interior(point, h.points) for h in poly.holes
+        ):
             return INSIDE
     return OUTSIDE
 
@@ -235,6 +237,40 @@ def test_reversed_polyline_is_reverse_image():
             assert fc.b == (rc.b[2], rc.b[1], rc.b[0])
 
 
+def test_island_polygon_inside_hole_is_material_in_either_order():
+    # A polygon strictly inside another polygon's hole ("island") must be
+    # part of the group's material union; the classification must not depend
+    # on the polygon order.
+    outer = sq(0, 0, 10, 10, [[(3, 3), (7, 3), (7, 7), (3, 7)]])
+    island = sq(4, 4, 6, 6)
+    path = [(3, 5), (7, 5)]
+
+    expected_intervals = [
+        (Fraction(0), Fraction(1, 4), OUTSIDE, OUTSIDE),
+        (Fraction(1, 4), Fraction(3, 4), INSIDE, OUTSIDE),
+        (Fraction(3, 4), Fraction(1), OUTSIDE, OUTSIDE),
+    ]
+    for order in ([outer, island], [island, outer]):
+        seg = transect_polyline(order, [], path)[0]
+        assert_well_partitioned(seg)
+        assert [(iv.t0, iv.t1, iv.a, iv.b) for iv in seg.intervals] == \
+            expected_intervals
+        cts = {c.t: c.a for c in seg.contacts}
+        assert cts[Fraction(1, 4)] == (OUTSIDE, BOUNDARY, INSIDE)
+        assert cts[Fraction(3, 4)] == (INSIDE, BOUNDARY, OUTSIDE)
+        # path endpoints sit on the hole boundary
+        assert cts[Fraction(0)][:2] == (None, BOUNDARY)
+        assert cts[Fraction(1)][1:] == (BOUNDARY, None)
+
+    # The two orderings produce identical results.
+    fst = transect_polyline([outer, island], [], path)[0]
+    snd = transect_polyline([island, outer], [], path)[0]
+    assert [(iv.t0, iv.t1, iv.a, iv.b) for iv in fst.intervals] == \
+           [(iv.t0, iv.t1, iv.a, iv.b) for iv in snd.intervals]
+    assert [(c.t, c.a) for c in fst.contacts] == \
+           [(c.t, c.a) for c in snd.contacts]
+
+
 def test_multi_segment_path_covers_each_raw_segment():
     a = [sq(0, 0, 4, 4)]
     path = [(-1, 1), (1, 1), (1, 5), (5, 5), (5, -1), (-1, -1)]
@@ -249,8 +285,11 @@ def test_multi_segment_path_covers_each_raw_segment():
 def test_dense_sampling_matches_independent_classifier():
     rng = random.Random(20260917)
     # A and B: axis-aligned rectangles (possibly with a hole), scattered.
+    # A also carries an island polygon sitting strictly inside its hole, so the
+    # random sampling exercises union-of-polygons classification.
     a = [sq(-6, -6, 2, 2,
             [[(-4, -4), (-1, -4), (-1, -1), (-4, -1)]]),
+         sq(-3, -3, -2, -2),
          sq(4, 4, 9, 9)]
     b = [sq(-2, -2, 6, 6), sq(-9, 3, -5, 7)]
 

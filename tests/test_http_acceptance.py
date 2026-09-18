@@ -222,6 +222,48 @@ def test_transect_fractional_forward_and_reverse_live():
         assert rc["a"] == [fc["a"][2], fc["a"][1], fc["a"][0]]
 
 
+def test_transect_island_in_hole_is_inside_independent_of_order_live():
+    # Outer square (0,0)-(10,10) with a hole (3,3)-(7,7), plus a separate
+    # polygon strictly inside that hole (4,4)-(6,6): an "island".  A group is
+    # the union of its polygons' material, so the island interior must always
+    # read "inside" regardless of the polygon array order.
+    outer = poly([(0, 0), (10, 0), (10, 10), (0, 10)],
+                 [[(3, 3), (7, 3), (7, 7), (3, 7)]])
+    island = poly([(4, 4), (6, 4), (6, 6), (4, 6)])
+    path = [[3, 5], [7, 5]]  # x = 3 + 4t: hole edges at t=0/1, island at 1/4/3/4
+
+    def submit(order):
+        status, data = _post(
+            "/api/v1/transect", {"a": order, "b": [], "path": path}
+        )
+        assert status == 200, data
+        return data["segments"][0]
+
+    outer_first = submit([outer, island])
+    island_first = submit([island, outer])
+
+    expected_intervals = [
+        ([0, 1], [1, 4], "outside", "outside"),
+        ([1, 4], [3, 4], "inside", "outside"),
+        ([3, 4], [1, 1], "outside", "outside"),
+    ]
+    for seg in (outer_first, island_first):
+        assert [(iv["t0"], iv["t1"], iv["a"], iv["b"])
+                for iv in seg["intervals"]] == expected_intervals
+        contacts = {tuple(c["t"]): c for c in seg["contacts"]}
+        # entering the island at t=1/4 and leaving it at t=3/4
+        assert contacts[(1, 4)]["a"] == ["outside", "boundary", "inside"]
+        assert contacts[(3, 4)]["a"] == ["inside", "boundary", "outside"]
+        assert contacts[(1, 4)]["point"] == [4, 1, 5, 1]
+        assert contacts[(3, 4)]["point"] == [6, 1, 5, 1]
+        # the path endpoints rest on the outer polygon's hole boundary
+        assert contacts[(0, 1)]["a"] == [None, "boundary", "outside"]
+        assert contacts[(1, 1)]["a"] == ["outside", "boundary", None]
+
+    # Swapping the polygon array order must not change the result at all.
+    assert island_first == outer_first
+
+
 def test_transect_illegal_path_rejected_then_overlap_still_works_live():
     square = poly([(0, 0), (4, 0), (4, 4), (0, 4)])
     status, data = _post(

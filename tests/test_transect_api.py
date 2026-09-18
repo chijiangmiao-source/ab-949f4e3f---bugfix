@@ -12,6 +12,7 @@ from fractions import Fraction
 
 
 SQ4 = [[0, 0], [4, 0], [4, 4], [0, 4]]
+SQ10 = [[0, 0], [10, 0], [10, 10], [0, 10]]
 
 
 def poly(exterior, holes=None):
@@ -172,6 +173,35 @@ def test_reversed_polyline_maps_one_to_one(client):
         assert rseg["end"] == eseg["end"]
         assert rseg["intervals"] == eseg["intervals"]
         assert rseg["contacts"] == eseg["contacts"]
+
+
+def test_island_in_hole_is_inside_regardless_of_polygon_order(client):
+    # A separate polygon strictly inside another polygon's hole is material:
+    # the group is the union of its polygons, and the verdict must not depend
+    # on the order in which the polygons are listed.
+    outer = poly(SQ10, [[[3, 3], [7, 3], [7, 7], [3, 7]]])
+    island = poly([[4, 4], [6, 4], [6, 6], [4, 6]])
+    path = [[3, 5], [7, 5]]
+
+    responses = []
+    for order in ([outer, island], [island, outer]):
+        resp = transect(client, order, [], path)
+        assert resp.status_code == 200, resp.text
+        responses.append(resp.json()["segments"][0])
+
+    expected = [
+        ([0, 1], [1, 4], "outside", "outside"),
+        ([1, 4], [3, 4], "inside", "outside"),
+        ([3, 4], [1, 1], "outside", "outside"),
+    ]
+    for seg in responses:
+        assert interval_pairs(seg) == expected
+        contacts = {tuple(c["t"]): c for c in seg["contacts"]}
+        assert contacts[(1, 4)]["a"] == ["outside", "boundary", "inside"]
+        assert contacts[(3, 4)]["a"] == ["inside", "boundary", "outside"]
+        assert contacts[(0, 1)]["a"] == [None, "boundary", "outside"]
+        assert contacts[(1, 1)]["a"] == ["outside", "boundary", None]
+    assert responses[1] == responses[0]
 
 
 def test_consecutive_duplicate_path_point_is_422_at_position(client):
