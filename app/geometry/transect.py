@@ -116,6 +116,10 @@ class _Region:
         for ring in self.boundary_rings:
             if _point_on_ring(p, ring):
                 return BOUNDARY
+        # The group is the union of its polygons' material regions: a point
+        # inside one polygon's hole may still be covered by a later polygon
+        # sitting inside that hole, so a hole hit must not short-circuit the
+        # scan -- otherwise the result would depend on the polygon order.
         for poly in self.polygons:
             if point_in_interior(p, poly.exterior.points):
                 # Material = inside exterior minus the union of all holes.  A
@@ -123,8 +127,9 @@ class _Region:
                 # parent hole as well and is outside material either way.
                 for hole in poly.holes:
                     if point_in_interior(p, hole.points):
-                        return OUTSIDE
-                return INSIDE
+                        break
+                else:
+                    return INSIDE
         return OUTSIDE
 
 

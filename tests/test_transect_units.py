@@ -42,11 +42,13 @@ def independent_status(point, polygons: list[Polygon]) -> str:
                 d = ring.points[(i + 1) % len(ring.points)]
                 if point_on_segment(point, c, d):
                     return BOUNDARY
+    # The group is the union of its polygons' material regions: landing in
+    # one polygon's hole excludes only that polygon, never a later polygon
+    # sitting inside the hole.
     for poly in polygons:
         if point_in_interior(point, poly.exterior.points):
-            if any(point_in_interior(point, h.points) for h in poly.holes):
-                return OUTSIDE
-            return INSIDE
+            if not any(point_in_interior(point, h.points) for h in poly.holes):
+                return INSIDE
     return OUTSIDE
 
 
@@ -132,6 +134,41 @@ def test_crosses_outer_ring_and_hole_two_groups():
         (OUTSIDE, BOUNDARY, INSIDE), (BOUNDARY, BOUNDARY, BOUNDARY))
     assert cts[Fraction(5, 8)] == (
         (INSIDE, BOUNDARY, OUTSIDE), (BOUNDARY, BOUNDARY, BOUNDARY))
+
+
+def test_island_inside_hole_is_inside_regardless_of_polygon_order():
+    # Group A: outer square (0,0)-(10,10) with hole (3,3)-(7,7), plus an
+    # independent plot (4,4)-(6,6) strictly inside the hole.  The group is
+    # the union of material regions, so the island's interior is INSIDE no
+    # matter where the island sits in the group's polygon list.
+    outer = sq(0, 0, 10, 10, [[(3, 3), (7, 3), (7, 7), (3, 7)]])
+    island = sq(4, 4, 6, 6)
+    expected_intervals = [
+        (Fraction(0), Fraction(1, 4), OUTSIDE, OUTSIDE),
+        (Fraction(1, 4), Fraction(3, 4), INSIDE, OUTSIDE),
+        (Fraction(3, 4), Fraction(1), OUTSIDE, OUTSIDE),
+    ]
+    expected_contacts = {
+        # path endpoints rest on the hole boundary
+        Fraction(0): ((None, BOUNDARY, OUTSIDE), (None, OUTSIDE, OUTSIDE)),
+        Fraction(1, 4): (
+            (OUTSIDE, BOUNDARY, INSIDE), (OUTSIDE, OUTSIDE, OUTSIDE)),
+        Fraction(3, 4): (
+            (INSIDE, BOUNDARY, OUTSIDE), (OUTSIDE, OUTSIDE, OUTSIDE)),
+        Fraction(1): ((OUTSIDE, BOUNDARY, None), (OUTSIDE, OUTSIDE, None)),
+    }
+    segs = []
+    for group in ([outer, island], [island, outer]):
+        seg = transect_polyline(group, [], [(3, 5), (7, 5)])[0]
+        assert_well_partitioned(seg)
+        assert [(iv.t0, iv.t1, iv.a, iv.b) for iv in seg.intervals] == (
+            expected_intervals
+        )
+        assert {c.t: (c.a, c.b) for c in seg.contacts} == expected_contacts
+        segs.append(seg)
+    # the two polygon orders produce identical intervals and contacts
+    assert segs[0].intervals == segs[1].intervals
+    assert segs[0].contacts == segs[1].contacts
 
 
 def test_vertex_tangency_records_before_middle_after():
@@ -249,9 +286,12 @@ def test_multi_segment_path_covers_each_raw_segment():
 def test_dense_sampling_matches_independent_classifier():
     rng = random.Random(20260917)
     # A and B: axis-aligned rectangles (possibly with a hole), scattered.
+    # A's third polygon is an independent plot strictly inside the first
+    # polygon's hole, so the sampling also exercises union semantics there.
     a = [sq(-6, -6, 2, 2,
             [[(-4, -4), (-1, -4), (-1, -1), (-4, -1)]]),
-         sq(4, 4, 9, 9)]
+         sq(4, 4, 9, 9),
+         sq(-3, -3, -2, -2)]
     b = [sq(-2, -2, 6, 6), sq(-9, 3, -5, 7)]
 
     for trial in range(200):

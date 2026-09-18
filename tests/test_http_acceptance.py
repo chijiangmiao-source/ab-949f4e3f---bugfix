@@ -151,6 +151,40 @@ def test_transect_two_groups_cross_outer_ring_and_hole_live():
     assert contact["a"] == ["outside", "boundary", "inside"]
 
 
+def test_transect_island_inside_hole_order_independent_live():
+    # Group A: outer square (0,0)-(10,10) with hole (3,3)-(7,7), plus an
+    # independent plot (4,4)-(6,6) strictly inside the hole.  The group is
+    # the union of its polygons' material regions, so the island's interior
+    # is "inside" and the answer must not depend on the array order.
+    outer = poly([(0, 0), (10, 0), (10, 10), (0, 10)],
+                 [[(3, 3), (7, 3), (7, 7), (3, 7)]])
+    island = poly([(4, 4), (6, 4), (6, 6), (4, 6)])
+    expected_intervals = [
+        {"t0": [0, 1], "t1": [1, 4], "a": "outside", "b": "outside"},
+        {"t0": [1, 4], "t1": [3, 4], "a": "inside", "b": "outside"},
+        {"t0": [3, 4], "t1": [1, 1], "a": "outside", "b": "outside"},
+    ]
+    segs = []
+    for a in ([outer, island], [island, outer]):
+        status, data = _post(
+            "/api/v1/transect", {"a": a, "b": [], "path": [[3, 5], [7, 5]]}
+        )
+        assert status == 200, data
+        segs.append(data["segments"][0])
+    for seg in segs:
+        assert seg["intervals"] == expected_intervals
+        contacts = {tuple(c["t"]): c for c in seg["contacts"]}
+        # entering / leaving the island at t = 1/4 and t = 3/4
+        assert contacts[(1, 4)]["point"] == [4, 1, 5, 1]
+        assert contacts[(1, 4)]["a"] == ["outside", "boundary", "inside"]
+        assert contacts[(3, 4)]["point"] == [6, 1, 5, 1]
+        assert contacts[(3, 4)]["a"] == ["inside", "boundary", "outside"]
+    # the final comparison: both polygon orders yield the same three
+    # intervals and the same contact relations
+    assert segs[0]["intervals"] == segs[1]["intervals"]
+    assert segs[0]["contacts"] == segs[1]["contacts"]
+
+
 def test_transect_vertex_tangency_and_boundary_run_live():
     square = poly([(0, 0), (4, 0), (4, 4), (0, 4)])
 

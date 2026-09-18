@@ -58,6 +58,48 @@ def test_two_group_path_crosses_outer_ring_and_hole(client):
                for x in iv["t0"] + iv["t1"])
 
 
+def test_island_inside_hole_is_inside_regardless_of_polygon_order(client):
+    # Group A: outer square (0,0)-(10,10) with hole (3,3)-(7,7), plus an
+    # independent plot (4,4)-(6,6) strictly inside the hole (a topology
+    # validate_group explicitly allows).  The group is the union of its
+    # polygons' material regions, so the path through the island must read
+    # outside / inside / outside whichever array order the group uses.
+    outer = poly([[0, 0], [10, 0], [10, 10], [0, 10]],
+                 [[[3, 3], [7, 3], [7, 7], [3, 7]]])
+    island = poly([[4, 4], [6, 4], [6, 6], [4, 6]])
+    expected_intervals = [
+        ([0, 1], [1, 4], "outside", "outside"),
+        ([1, 4], [3, 4], "inside", "outside"),
+        ([3, 4], [1, 1], "outside", "outside"),
+    ]
+    expected_contacts = [
+        # t, point, a-triple, b-triple (group B is empty: outside throughout;
+        # the path endpoints rest on the hole boundary, hence the null sides)
+        ([0, 1], [3, 1, 5, 1],
+         [None, "boundary", "outside"], [None, "outside", "outside"]),
+        ([1, 4], [4, 1, 5, 1],
+         ["outside", "boundary", "inside"], ["outside", "outside", "outside"]),
+        ([3, 4], [6, 1, 5, 1],
+         ["inside", "boundary", "outside"], ["outside", "outside", "outside"]),
+        ([1, 1], [7, 1, 5, 1],
+         ["outside", "boundary", None], ["outside", "outside", None]),
+    ]
+    segs = []
+    for a in ([outer, island], [island, outer]):
+        resp = transect(client, a, [], [[3, 5], [7, 5]])
+        assert resp.status_code == 200, resp.text
+        segs.append(resp.json()["segments"][0])
+    for seg in segs:
+        assert interval_pairs(seg) == expected_intervals
+        assert [
+            (c["t"], c["point"], c["a"], c["b"]) for c in seg["contacts"]
+        ] == expected_contacts
+    # the final acceptance comparison: swapping the array order changes
+    # neither the three intervals nor the t = 1/4 / 3/4 contact relations
+    assert segs[0]["intervals"] == segs[1]["intervals"]
+    assert segs[0]["contacts"] == segs[1]["contacts"]
+
+
 def test_intervals_cover_each_raw_segment_completely(client):
     a = [poly(SQ4)]
     path = [[-1, 1], [1, 1], [1, 5], [5, 5], [5, -1], [-1, -1]]
